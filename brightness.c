@@ -7,8 +7,6 @@
 #define CHARGE_PIN 24
 #define READ_PIN 18
 
-#define STACK_SIZE 10
-
 #define BRIGHTNESS_FILE "/sys/class/backlight/rpi_backlight/brightness"
 #define BRIGHTNESS_MAX 255
 #define BRIGHTNESS_MIN 16
