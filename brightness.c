@@ -35,20 +35,18 @@ float map(float x)
 
 
 void set_brightness(int brightness_value) {
-    FILE *brightness_file;
-
     if (brightness_value > BRIGHTNESS_MAX) {
         brightness_value = BRIGHTNESS_MAX;
     }
     if (brightness_value < BRIGHTNESS_MIN) {
         brightness_value = BRIGHTNESS_MIN;
     }    
-    
-    brightness_file = fopen(BRIGHTNESS_FILE, "w");
+	
+	FILE *brightness_file = fopen(BRIGHTNESS_FILE, "w");
     
     fprintf(brightness_file, "%d", brightness_value);
     
-    fclose(brightness_file);
+    fclose(brightness_file);;
 }
 
 int main()
@@ -122,11 +120,17 @@ int main()
 		y_stern = 0.1 * y + (1 - 0.1) * y_stern__prev;
 		y_stern__prev = y_stern;
 
-
 		//printf("y: %f   %f\n", y, y_stern);
 
 		
 	 	brightness = (int)map(y_stern);
+		
+		set_brightness(brightness);
+		printf("Brightness:     %d\n", brightness);
+
+		sleep(1);
+		
+		/*
 		if (brightness > brightness_cur) {
 			brightness_cur++;
 		}
@@ -136,9 +140,8 @@ int main()
 		set_brightness(brightness_cur);
 		printf("Brightness:     %d\n", brightness_cur);
 
-
-		//sleep(1);
 		usleep(100000);
+		*/
 	}
 
 	release_lines:
