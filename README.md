@@ -2,4 +2,4 @@
 Brightness control for Raspberry Pi 7-Inch Touch Screen Display
 
 
-Compile with gcc -Wall -o backlight backlight.c -lgpiod
+Compile with gcc -Wall -o brightness brightness.c -lgpiod

@@ -14,33 +14,6 @@
 #define BRIGHTNESS_MIN 16
 #define	CONSUMER	"backlight"
 
-typedef struct
-{
-	float data[STACK_SIZE];
-	int top;
-} stack_t;
-
-void push(stack_t *stack, float value)
-{
-	if (stack->top < STACK_SIZE) {
-        stack->data[stack->top++] = value;
-    } else {
-        // stack is full, so "pop" the oldest value by shifting all
-        // elements to the left by one position
-        for (int i = 0; i < STACK_SIZE - 1; ++i) {
-            stack->data[i] = stack->data[i + 1];
-        }
-        stack->data[STACK_SIZE - 1] = value;
-    }
-}
-
-float get_average(const stack_t *stack) {
-    float sum = 0;
-    for (int i = 0; i < stack->top; ++i) {
-        sum += stack->data[i];
-    }
-    return sum / stack->top;
-}
 
 float map(float x)
 {
@@ -82,10 +55,6 @@ void set_brightness(int brightness_value) {
 
 int main()
 {
-	
-	stack_t stack;
-	stack.top = 0;
-
 	struct timespec ts = { 0, 10000000 }; // 10 milliseconds
 	struct timespec start, end;
 
@@ -111,7 +80,7 @@ int main()
 	float y, y_stern, y_stern__prev;
 	y_stern__prev = 0;
 
-	int brightness, brightness_prev, brightness_cur;
+	int brightness, brightness_cur;
 	brightness_cur = 16;
 	while (1)
 	{
@@ -168,23 +137,7 @@ int main()
 		}
 		set_brightness(brightness_cur);
 		printf("Brightness:     %d\n", brightness_cur);
-/*
-		int duration = 100000; // 100 milliseconds
-		int i;
-		if(brightness_prev > brightness){
-			for (i = brightness_prev; i >= brightness; i--) {
-					set_brightness(i);
-					usleep(duration / abs(brightness - brightness_prev));
-				}
-		} 
-		else if(brightness_prev < brightness){
-			for (i = brightness_prev; i <= brightness; i++) {
-					set_brightness(i);
-					usleep(duration / abs(brightness - brightness_prev));
-				}
-		}
-		brightness_prev = brightness;
-*/
+
 
 		//sleep(1);
 		usleep(100000);
