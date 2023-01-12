@@ -7,139 +7,194 @@
 #define CHARGE_PIN 24
 #define READ_PIN 18
 
-#define MAX_STACK_SIZE 10
+#define STACK_SIZE 10
 
-typedef struct Stack {
-    int values[MAX_STACK_SIZE];
-    int size;
-} Stack;
+#define BRIGHTNESS_FILE "/sys/class/backlight/rpi_backlight/brightness"
+#define BRIGHTNESS_MAX 255
+#define BRIGHTNESS_MIN 16
+#define	CONSUMER	"backlight"
 
-void push(Stack *stack, int value) {
-    if (stack->size < MAX_STACK_SIZE) {
-        stack->values[stack->size] = value;
-        stack->size++;
+typedef struct
+{
+	float data[STACK_SIZE];
+	int top;
+} stack_t;
+
+void push(stack_t *stack, float value)
+{
+	if (stack->top < STACK_SIZE) {
+        stack->data[stack->top++] = value;
     } else {
-        // Shift all values down one position
-        for (int i = 1; i < MAX_STACK_SIZE; i++) {
-            stack->values[i-1] = stack->values[i];
+        // stack is full, so "pop" the oldest value by shifting all
+        // elements to the left by one position
+        for (int i = 0; i < STACK_SIZE - 1; ++i) {
+            stack->data[i] = stack->data[i + 1];
         }
-        // Add new value to end of stack
-        stack->values[MAX_STACK_SIZE-1] = value;
+        stack->data[STACK_SIZE - 1] = value;
     }
 }
 
-int getAverage(Stack *stack) {
-    if (stack->size == 0) {
-        return 0;
+float get_average(const stack_t *stack) {
+    float sum = 0;
+    for (int i = 0; i < stack->top; ++i) {
+        sum += stack->data[i];
     }
-
-    int sum = 0;
-    for (int i = 0; i < stack->size; i++) {
-        sum += stack->values[i];
-    }
-    return sum / stack->size;
+    return sum / stack->top;
 }
 
-int map(int value) {
-  // Make sure value is within the valid range
-  if (value < 0) {
-    value = 0;
-  } else if (value > 4096) {
-    value = 4096;
-  }
+float map(float x)
+{
+	// 0 -15
+	// f(x) = -64/5·x + 255
+	// 15-60
+	// f(x) = -32/45·x + 221/3
+	// 60-240
+	// f(x) = -31/180·x + 124/3
 
-  // Calculate the mapping value
-  return 255 - (value / 4096.0) * 239;
+	if ( x <= 15) {
+		return -64.0/5.0 * x + 255.0;
+	}
+	else if (x > 15 && x <= 60) {
+		return -32.0/45.0 * x + 221.0/3.0;
+	}
+	else {
+		return -31.0/180.0 * x + 124.0/3.0;
+	}
 }
 
-float map2(int value) {
-  // Make sure value is within the valid range
-  if (value < 0) {
-    value = 0;
-  } else if (value > 4096) {
-    value = 4096;
-  }
 
-  // Calculate the mapping value using a logarithmic function
-  double log_value = log10(value + 1) / log10(4096 + 1);
-  return log_value * 240 + 16;
+void set_brightness(int brightness_value) {
+    FILE *brightness_file;
+
+    if (brightness_value > BRIGHTNESS_MAX) {
+        brightness_value = BRIGHTNESS_MAX;
+    }
+    if (brightness_value < BRIGHTNESS_MIN) {
+        brightness_value = BRIGHTNESS_MIN;
+    }    
+    
+    brightness_file = fopen(BRIGHTNESS_FILE, "w");
+    
+    fprintf(brightness_file, "%d", brightness_value);
+    
+    fclose(brightness_file);
 }
 
 int main()
 {
-	Stack stack;
-	stack.size = 0;
+	
+	stack_t stack;
+	stack.top = 0;
 
-        struct gpiod_chip *gpiochip;
-        struct gpiod_line *gpio_charge_line;
-	struct gpiod_line *gpio_read_line;
-        int ret;
+	struct timespec ts = { 0, 10000000 }; // 10 milliseconds
+	struct timespec start, end;
 
-        gpiochip = gpiod_chip_open("/dev/gpiochip0");
-        if (gpiochip == NULL)
-                goto error_open;
+	struct gpiod_chip * gpiochip;
+	struct gpiod_line * gpio_charge_line;
+	struct gpiod_line * gpio_read_line;
 
+	int ret;
 
-        gpio_charge_line = gpiod_chip_get_line(gpiochip, CHARGE_PIN);
+	// Init GPIO
+	gpiochip = gpiod_chip_open("/dev/gpiochip0");
+	if (gpiochip == NULL)
+		goto error_open;
+
+	// Get GPIO pins
+	gpio_charge_line = gpiod_chip_get_line(gpiochip, CHARGE_PIN);
 	gpio_read_line = gpiod_chip_get_line(gpiochip, READ_PIN);
-        if (gpio_charge_line == NULL)
-                goto error_gpio;
-        if (gpio_read_line == NULL)
-                goto error_gpio;
+	if (gpio_charge_line == NULL)
+		goto close_chip;
+	if (gpio_read_line == NULL)
+		goto close_chip;
 
-        ret = gpiod_line_request_output(gpio_charge_line, "gpio", 0);
-        if (ret != 0)
-                goto error_gpio;
+	float y, y_stern, y_stern__prev;
+	y_stern__prev = 0;
+
+	int brightness, brightness_prev, brightness_cur;
+	brightness_cur = 16;
+	while (1)
+	{
+		// Discharge 
+		ret = gpiod_line_request_output(gpio_charge_line, CONSUMER, 0);
+		if (ret != 0)
+			goto release_lines;
+		ret = gpiod_line_request_output(gpio_read_line, CONSUMER, 0);
+		if (ret != 0)
+			goto release_lines;
+
+		usleep(10000);
+
+		gpiod_line_release(gpio_charge_line);
+		gpiod_line_release(gpio_read_line);
+
+		ret = gpiod_line_request_rising_edge_events(gpio_read_line, CONSUMER);
+		if (ret != 0)
+			goto release_lines;
+
+		ret = gpiod_line_request_output(gpio_charge_line, CONSUMER, 1);
+		if (ret != 0)
+			goto release_lines;
+		
+		// Warten auf Signal von 0 auf 1
+		clock_gettime(CLOCK_MONOTONIC, &start);
+		ret = gpiod_line_event_wait(gpio_read_line, &ts);
+		clock_gettime(CLOCK_MONOTONIC, &end);
+
+		if (ret > 0 && end.tv_nsec > start.tv_nsec) {
+			y = end.tv_nsec - start.tv_nsec;
+		} else {
+			y = 10000000;
+		}
+		y = y / 50000; // Map to 0 - 240
+
+		gpiod_line_release(gpio_charge_line);
+		gpiod_line_release(gpio_read_line);
+
+		// https://de.wikipedia.org/wiki/Exponentielle_Gl%C3%A4ttung
+		y_stern = 0.1 * y + (1 - 0.1) * y_stern__prev;
+		y_stern__prev = y_stern;
 
 
-while(1) {
-	gpiod_line_set_value(gpio_charge_line, 0);
-        ret = gpiod_line_request_output(gpio_read_line, "gpio", 0);
-        if (ret != 0)
-                goto error_gpio;
+		//printf("y: %f   %f\n", y, y_stern);
 
-	//sleep(1);
-	usleep(10000);
+		
+	 	brightness = (int)map(y_stern);
+		if (brightness > brightness_cur) {
+			brightness_cur++;
+		}
+		else if (brightness < brightness_cur) {
+			brightness_cur--;
+		}
+		set_brightness(brightness_cur);
+		printf("Brightness:     %d\n", brightness_cur);
+/*
+		int duration = 100000; // 100 milliseconds
+		int i;
+		if(brightness_prev > brightness){
+			for (i = brightness_prev; i >= brightness; i--) {
+					set_brightness(i);
+					usleep(duration / abs(brightness - brightness_prev));
+				}
+		} 
+		else if(brightness_prev < brightness){
+			for (i = brightness_prev; i <= brightness; i++) {
+					set_brightness(i);
+					usleep(duration / abs(brightness - brightness_prev));
+				}
+		}
+		brightness_prev = brightness;
+*/
 
-	gpiod_line_release(gpio_read_line);
-
-	ret = gpiod_line_request_input(gpio_read_line, "gpio");
-        if (ret != 0)
-                goto error_gpio;
-
-	int counter = 0;
-	gpiod_line_set_value(gpio_charge_line, 1);
-
-	int val;
-	while(counter < 32000) {
-		val = gpiod_line_get_value(gpio_read_line);
-		if (val == 1) {
-     			 break;
-    		}
-		counter++;
+		//sleep(1);
+		usleep(100000);
 	}
-	gpiod_line_set_value(gpio_charge_line, 0);
 
-	printf("counter: %d\n", counter);
-
-	gpiod_line_release(gpio_read_line);
-
-	push(&stack, counter);
-
-	printf("Average:     %d\n", getAverage(&stack));
-
-	printf("Brightness:     %f\n", map2(getAverage(&stack)));
-
-	//sleep(1);
-	usleep(20000);
-
-}
-	gpiod_chip_close(gpiochip);
-
-
-
-error_gpio:
-        gpiod_chip_close(gpiochip);
-error_open:
-        return -1;
+	release_lines:
+		gpiod_line_release(gpio_charge_line);
+		gpiod_line_release(gpio_read_line);
+	close_chip:
+		gpiod_chip_close(gpiochip);
+	error_open:
+		return ret;
 }
