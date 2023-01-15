@@ -7,29 +7,32 @@
 #define CHARGE_PIN 24
 #define READ_PIN 18
 
-#define BRIGHTNESS_FILE "/sys/class/backlight/rpi_backlight/brightness"
+#define READ_TIMEOUT 15000000
+
+#define BRIGHTNESS_FILE "/sys/class/backlight/10-0045/brightness"
 #define BRIGHTNESS_MAX 255
 #define BRIGHTNESS_MIN 16
-#define	CONSUMER	"backlight"
+
+#define	CONSUMER "brightness"
 
 
-float map(float x)
+float map_to_brightness(float x)
 {
-	// 0 -15
-	// f(x) = -64/5·x + 255
-	// 15-60
-	// f(x) = -32/45·x + 221/3
-	// 60-240
-	// f(x) = -31/180·x + 124/3
+	// 0 - 10
+	// f(x) = -96/5·x + 255
+	// 10-50
+	// f(x) = -4/5·x + 71
+	// 50-150
+	// f(x) = -3/20·x + 77/2
 
-	if ( x <= 15) {
-		return -64.0/5.0 * x + 255.0;
+	if ( x <= 10) {
+		return -96.0/5.0 * x + 255.0;
 	}
-	else if (x > 15 && x <= 60) {
-		return -32.0/45.0 * x + 221.0/3.0;
+	else if (x > 10 && x <= 50) {
+		return -4.0/5.0 * x + 71.0;
 	}
 	else {
-		return -31.0/180.0 * x + 124.0/3.0;
+		return -3.0/20.0 * x + 77.0/2.0;
 	}
 }
 
@@ -49,9 +52,10 @@ void set_brightness(int brightness_value) {
     fclose(brightness_file);;
 }
 
+
 int main()
 {
-	struct timespec ts = { 0, 10000000 }; // 10 milliseconds
+	struct timespec ts = { 0, READ_TIMEOUT }; // 15 milliseconds
 	struct timespec start, end;
 
 	struct gpiod_chip * gpiochip;
@@ -93,6 +97,7 @@ int main()
 		gpiod_line_release(gpio_charge_line);
 		gpiod_line_release(gpio_read_line);
 
+		// Charge 
 		ret = gpiod_line_request_rising_edge_events(gpio_read_line, CONSUMER);
 		if (ret != 0)
 			goto release_lines;
@@ -101,36 +106,35 @@ int main()
 		if (ret != 0)
 			goto release_lines;
 		
-		// Warten auf Signal von 0 auf 1
 		clock_gettime(CLOCK_MONOTONIC, &start);
-		ret = gpiod_line_event_wait(gpio_read_line, &ts);
+		ret = gpiod_line_event_wait(gpio_read_line, &ts); // Wait until the signal changes from 0 to 1
 		clock_gettime(CLOCK_MONOTONIC, &end);
 
 		if (ret > 0 && end.tv_nsec > start.tv_nsec) {
 			y = end.tv_nsec - start.tv_nsec;
 		} else {
-			y = 10000000;
+			y = READ_TIMEOUT;
 		}
-		y = y / 50000; // Map to 0 - 240
 
 		gpiod_line_release(gpio_charge_line);
 		gpiod_line_release(gpio_read_line);
 
-		// https://de.wikipedia.org/wiki/Exponentielle_Gl%C3%A4ttung
-		y_stern = 0.1 * y + (1 - 0.1) * y_stern__prev;
+		// Smooth values 
+		y_stern = 0.1 * y + (1 - 0.1) * y_stern__prev; // https://de.wikipedia.org/wiki/Exponentielle_Gl%C3%A4ttung
 		y_stern__prev = y_stern;
 
 		//printf("y: %f   %f\n", y, y_stern);
 
-		
-	 	brightness = (int)map(y_stern);
-		
+		// Map timing values to brightness values
+	 	brightness = (int)map_to_brightness( y_stern / 100000.0 ); // Map to 0 - 150
+		/*
+		// Set brightness of display
 		set_brightness(brightness);
 		printf("Brightness:     %d\n", brightness);
 
 		sleep(1);
-		
-		/*
+		*/
+		 
 		if (brightness > brightness_cur) {
 			brightness_cur++;
 		}
@@ -138,10 +142,10 @@ int main()
 			brightness_cur--;
 		}
 		set_brightness(brightness_cur);
-		printf("Brightness:     %d\n", brightness_cur);
+		//printf("Brightness:     %d\n", brightness_cur);
 
 		usleep(100000);
-		*/
+		 
 	}
 
 	release_lines:
